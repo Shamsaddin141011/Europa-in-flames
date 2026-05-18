@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Crown, Sword, Scroll, Coins, Shield, Send, RefreshCw, Eye, EyeOff, Flame } from 'lucide-react';
+import { Crown, Sword, Scroll, Coins, Shield, Send, RefreshCw, Flame } from 'lucide-react';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_KEY;
@@ -52,9 +52,11 @@ export default function Wargame() {
   const [myName, setMyName] = useState(() => typeof window !== 'undefined' ? localStorage.getItem('myName') || '' : '');
   const [claimName, setClaimName] = useState('');
   const [orderText, setOrderText] = useState('');
-  const [resolving, setResolving] = useState(false);
   const [refMode, setRefMode] = useState(false);
-  const [showOrders, setShowOrders] = useState(false);
+  const [refPasswordInput, setRefPasswordInput] = useState('');
+  const [refPasswordMode, setRefPasswordMode] = useState(false);
+  const [pasteResult, setPasteResult] = useState('');
+  const [applying, setApplying] = useState(false);
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(true);
 
@@ -179,33 +181,55 @@ export default function Wargame() {
     }
   };
 
-  const resolveTurn = async () => {
+  const unlockRef = () => {
+    if (refPasswordInput === 'Orud_iw') {
+      setRefMode(true);
+      setRefPasswordMode(false);
+      setRefPasswordInput('');
+    } else {
+      setStatus('Wrong password');
+    }
+  };
+
+  const copyPrompt = () => {
     if (currentOrders.length === 0) {
-      setStatus('No orders to resolve');
+      setStatus('No orders to copy');
       return;
     }
-    setResolving(true);
-    setStatus('The referee is resolving the turn...');
+    const orderLines = currentOrders
+      .map(o => `${o.faction} — ${o.player_name}: ${o.order_text}`)
+      .join('\n\n');
+    const stateStr = JSON.stringify(game.state, null, 2);
+    const text = `You are the impartial referee of a Napoleonic Wars alt-history wargame. Resolve Turn ${game.turn} (${game.state.season} ${game.state.year}).
 
+Game state:
+${stateStr}
+
+Player orders:
+${orderLines}
+
+Apply historical realism — geography, supply lines, army size, treasury, morale, diplomacy, and random misfortune where plausible. Be strictly impartial.
+
+Return ONLY valid JSON in this exact format:
+{
+  "narrative": "3-5 paragraph dramatic chronicle of what happened this turn",
+  "updated_state": { factions: {}, year: number, season: string }
+}
+
+Advance the season (Spring→Summer→Autumn→Winter→next year Spring). Update armies, territories, treasury, morale from outcomes. Output nothing except the JSON.`;
+    navigator.clipboard.writeText(text);
+    setStatus('Prompt copied — paste into Claude.ai');
+  };
+
+  const applyResult = async () => {
+    if (!pasteResult.trim()) {
+      setStatus('Paste the JSON result first');
+      return;
+    }
+    setApplying(true);
     try {
-      const response = await fetch('/api/resolve', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          state: game.state,
-          orders: currentOrders,
-          turn: game.turn
-        })
-      });
-
-      if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.error || 'Resolution failed');
-      }
-
-      const result = await response.json();
-
-      // Preserve player claims through state update
+      const clean = pasteResult.replace(/```json|```/g, '').trim();
+      const result = JSON.parse(clean);
       const preservedFactions = {};
       Object.entries(result.updated_state.factions).forEach(([name, data]) => {
         preservedFactions[name] = {
@@ -213,7 +237,6 @@ export default function Wargame() {
           player: game.state.factions[name]?.player ?? null
         };
       });
-
       await sb('game?id=eq.1', {
         method: 'PATCH',
         body: JSON.stringify({
@@ -223,13 +246,14 @@ export default function Wargame() {
           updated_at: new Date().toISOString()
         })
       });
-
-      setStatus('Turn resolved');
+      setPasteResult('');
+      setRefMode(false);
+      setStatus('Turn advanced to ' + (game.turn + 1));
       loadGame();
     } catch (e) {
-      setStatus('Resolution failed: ' + e.message);
+      setStatus('Invalid JSON: ' + e.message);
     } finally {
-      setResolving(false);
+      setApplying(false);
     }
   };
 
@@ -435,60 +459,102 @@ export default function Wargame() {
         }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
             <h3 style={{ margin: 0, letterSpacing: 3, fontSize: 16, color: '#d4af37' }}>⚖ REFEREE PANEL</h3>
-            <button onClick={() => setRefMode(!refMode)} style={{
-              padding: '6px 16px', background: 'transparent', color: '#d4af37',
-              border: '1px solid #8b6914', cursor: 'pointer', fontSize: 11,
-              letterSpacing: 2, fontFamily: 'inherit'
-            }}>{refMode ? 'LOCK' : 'UNLOCK'}</button>
+            {refMode ? (
+              <button onClick={() => { setRefMode(false); setRefPasswordMode(false); }} style={{
+                padding: '6px 16px', background: 'transparent', color: '#d4af37',
+                border: '1px solid #8b6914', cursor: 'pointer', fontSize: 11,
+                letterSpacing: 2, fontFamily: 'inherit'
+              }}>LOCK</button>
+            ) : (
+              <button onClick={() => setRefPasswordMode(v => !v)} style={{
+                padding: '6px 16px', background: 'transparent', color: '#d4af37',
+                border: '1px solid #8b6914', cursor: 'pointer', fontSize: 11,
+                letterSpacing: 2, fontFamily: 'inherit'
+              }}>UNLOCK</button>
+            )}
           </div>
+
+          {!refMode && refPasswordMode && (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 16 }}>
+              <input
+                type="password"
+                placeholder="Referee password..."
+                value={refPasswordInput}
+                onChange={e => setRefPasswordInput(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && unlockRef()}
+                style={{
+                  padding: '8px 12px', background: '#2d1f15', color: '#f5e6c8',
+                  border: '1px solid #8b6914', fontFamily: 'inherit', fontSize: 13, flex: 1
+                }}
+              />
+              <button onClick={unlockRef} style={{
+                padding: '8px 16px', background: '#8b6914', color: '#1a1410',
+                border: 'none', cursor: 'pointer', letterSpacing: 2,
+                fontSize: 11, fontWeight: 'bold', fontFamily: 'inherit'
+              }}>ENTER</button>
+            </div>
+          )}
 
           {refMode && (
             <>
-              <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
-                <button onClick={resolveTurn} disabled={resolving || currentOrders.length === 0}
-                  style={{
-                    padding: '12px 24px', background: resolving ? '#444' : '#dc2626',
-                    color: '#fff', border: 'none', cursor: resolving ? 'wait' : 'pointer',
-                    letterSpacing: 3, fontSize: 13, fontWeight: 'bold', fontFamily: 'inherit'
-                  }}>
-                  {resolving
-                    ? <RefreshCw size={14} style={{ display: 'inline', marginRight: 6, animation: 'spin 1s linear infinite' }} />
-                    : <Sword size={14} style={{ display: 'inline', marginRight: 6, verticalAlign: 'middle' }} />}
-                  {resolving ? 'RESOLVING...' : `RESOLVE TURN ${game.turn}`}
-                </button>
-                <button onClick={() => setShowOrders(!showOrders)} style={{
-                  padding: '12px 24px', background: 'transparent', color: '#d4af37',
-                  border: '1px solid #8b6914', cursor: 'pointer', letterSpacing: 2,
-                  fontSize: 12, fontFamily: 'inherit'
-                }}>
-                  {showOrders
-                    ? <EyeOff size={14} style={{ display: 'inline', marginRight: 6, verticalAlign: 'middle' }} />
-                    : <Eye size={14} style={{ display: 'inline', marginRight: 6, verticalAlign: 'middle' }} />}
-                  {showOrders ? 'HIDE ORDERS' : `VIEW ORDERS (${currentOrders.length})`}
-                </button>
+              <div style={{ background: '#1a1410', padding: 16, borderRadius: 2, marginBottom: 16, maxHeight: 300, overflowY: 'auto' }}>
+                {currentOrders.length === 0 ? (
+                  <p style={{ opacity: 0.6, fontStyle: 'italic', margin: 0 }}>No orders submitted yet for this turn.</p>
+                ) : (
+                  currentOrders.map(o => {
+                    const c = FACTION_COLORS[o.faction];
+                    return (
+                      <div key={o.id} style={{ marginBottom: 12, paddingBottom: 12, borderBottom: '1px solid #2d1f15' }}>
+                        <div style={{ color: c?.accent || '#d4af37', fontSize: 13, marginBottom: 4, letterSpacing: 1 }}>
+                          {c?.emblem} {o.faction} — {o.player_name}
+                        </div>
+                        <div style={{ fontSize: 13, lineHeight: 1.6, opacity: 0.9, whiteSpace: 'pre-wrap' }}>
+                          {o.order_text}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
               </div>
 
-              {showOrders && (
-                <div style={{ background: '#1a1410', padding: 16, borderRadius: 2, maxHeight: 400, overflowY: 'auto' }}>
-                  {currentOrders.length === 0 ? (
-                    <p style={{ opacity: 0.6, fontStyle: 'italic', margin: 0 }}>No orders submitted yet for this turn.</p>
-                  ) : (
-                    currentOrders.map(o => {
-                      const c = FACTION_COLORS[o.faction];
-                      return (
-                        <div key={o.id} style={{ marginBottom: 12, paddingBottom: 12, borderBottom: '1px solid #2d1f15' }}>
-                          <div style={{ color: c?.accent || '#d4af37', fontSize: 13, marginBottom: 4, letterSpacing: 1 }}>
-                            {c?.emblem} {o.faction} — {o.player_name}
-                          </div>
-                          <div style={{ fontSize: 13, lineHeight: 1.6, opacity: 0.9, whiteSpace: 'pre-wrap' }}>
-                            {o.order_text}
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              )}
+              <button onClick={copyPrompt} disabled={currentOrders.length === 0} style={{
+                padding: '12px 24px', background: '#8b6914', color: '#1a1410',
+                border: 'none', cursor: currentOrders.length === 0 ? 'not-allowed' : 'pointer',
+                letterSpacing: 3, fontSize: 13, fontWeight: 'bold', fontFamily: 'inherit',
+                marginBottom: 20, opacity: currentOrders.length === 0 ? 0.5 : 1
+              }}>
+                <Scroll size={14} style={{ display: 'inline', marginRight: 6, verticalAlign: 'middle' }} />
+                COPY PROMPT
+              </button>
+
+              <div style={{ marginBottom: 8, fontSize: 11, letterSpacing: 2, color: '#d4af37', opacity: 0.8 }}>
+                PASTE JSON RESULT FROM CLAUDE
+              </div>
+              <textarea
+                value={pasteResult}
+                onChange={e => setPasteResult(e.target.value)}
+                placeholder='Paste the {"narrative": ..., "updated_state": ...} JSON here'
+                rows={6}
+                style={{
+                  width: '100%', padding: 12, background: '#2d1f15', color: '#f5e6c8',
+                  border: '1px solid #8b6914', fontFamily: 'monospace', fontSize: 12,
+                  resize: 'vertical', boxSizing: 'border-box', marginBottom: 12
+                }}
+              />
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: 12, opacity: 0.7, color: status.includes('Invalid') ? '#dc2626' : '#d4af37' }}>{status}</span>
+                <button onClick={applyResult} disabled={applying || !pasteResult.trim()} style={{
+                  padding: '12px 28px', background: applying ? '#444' : '#dc2626',
+                  color: '#fff', border: 'none', cursor: applying || !pasteResult.trim() ? 'not-allowed' : 'pointer',
+                  letterSpacing: 3, fontSize: 13, fontWeight: 'bold', fontFamily: 'inherit',
+                  opacity: !pasteResult.trim() ? 0.5 : 1
+                }}>
+                  {applying
+                    ? <RefreshCw size={14} style={{ display: 'inline', marginRight: 6, animation: 'spin 1s linear infinite' }} />
+                    : <Sword size={14} style={{ display: 'inline', marginRight: 6, verticalAlign: 'middle' }} />}
+                  {applying ? 'APPLYING...' : `APPLY & ADVANCE TO TURN ${game.turn + 1}`}
+                </button>
+              </div>
             </>
           )}
         </div>
