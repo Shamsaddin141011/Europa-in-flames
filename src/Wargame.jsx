@@ -497,26 +497,6 @@ Advance the season (Spring→Summer→Autumn→Winter→next year Spring). Updat
 
           {refMode && (
             <>
-              <div style={{ background: '#1a1410', padding: 16, borderRadius: 2, marginBottom: 16, maxHeight: 300, overflowY: 'auto' }}>
-                {currentOrders.length === 0 ? (
-                  <p style={{ opacity: 0.6, fontStyle: 'italic', margin: 0 }}>No orders submitted yet for this turn.</p>
-                ) : (
-                  currentOrders.map(o => {
-                    const c = FACTION_COLORS[o.faction];
-                    return (
-                      <div key={o.id} style={{ marginBottom: 12, paddingBottom: 12, borderBottom: '1px solid #2d1f15' }}>
-                        <div style={{ color: c?.accent || '#d4af37', fontSize: 13, marginBottom: 4, letterSpacing: 1 }}>
-                          {c?.emblem} {o.faction} — {o.player_name}
-                        </div>
-                        <div style={{ fontSize: 13, lineHeight: 1.6, opacity: 0.9, whiteSpace: 'pre-wrap' }}>
-                          {o.order_text}
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-
               <button onClick={copyPrompt} disabled={currentOrders.length === 0} style={{
                 padding: '12px 24px', background: '#8b6914', color: '#1a1410',
                 border: 'none', cursor: currentOrders.length === 0 ? 'not-allowed' : 'pointer',
