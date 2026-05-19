@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Crown, Sword, Scroll, Coins, Shield, Send, RefreshCw, Flame } from 'lucide-react';
 import { ComposableMap, Geographies, Geography } from 'react-simple-maps';
+import provincesData from './provinces.json';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_KEY;
@@ -27,7 +28,6 @@ const FACTION_MAP_FILL = {
   Naples:  '#ec4899',
 };
 
-const GEO_URL = '/provinces.geojson';
 
 // ISO 3166-1 alpha-3 → alpha-2 (Natural Earth admin-1 uses adm0_a3)
 const ALPHA3_TO_ALPHA2 = {
@@ -109,7 +109,6 @@ export default function Wargame() {
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(true);
   const [hoveredGeo, setHoveredGeo] = useState(null);
-  const [geoData, setGeoData] = useState(null);
 
   const loadGame = async () => {
     try {
@@ -139,12 +138,6 @@ export default function Wargame() {
     return () => clearInterval(interval);
   }, []);
 
-  useEffect(() => {
-    fetch('/provinces.geojson')
-      .then(r => r.json())
-      .then(data => setGeoData(data))
-      .catch(e => console.error('provinces load failed:', e));
-  }, []);
 
   // Clear stale localStorage faction if game was reset or faction was taken
   useEffect(() => {
@@ -397,7 +390,7 @@ Advance the season (Spring→Summer→Autumn→Winter→next year Spring). Updat
               width={960}
               height={500}
             >
-              <Geographies geography={geoData || GEO_URL}>
+              <Geographies geography={provincesData}>
                 {({ geographies }) =>
                   geographies.map((geo) => {
                     const a2 = ALPHA3_TO_ALPHA2[geo.properties.adm0_a3];
