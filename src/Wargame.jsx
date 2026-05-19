@@ -153,6 +153,19 @@ export default function Wargame() {
     return () => clearInterval(interval);
   }, []);
 
+  // Clear stale localStorage faction if game was reset or faction was taken
+  useEffect(() => {
+    if (game && myFaction && myName) {
+      const factionData = game.state.factions[myFaction];
+      if (!factionData || factionData.player !== myName) {
+        localStorage.removeItem('myFaction');
+        localStorage.removeItem('myName');
+        setMyFaction('');
+        setMyName('');
+      }
+    }
+  }, [game]);
+
   const currentOrders = orders.filter(o => o.turn === game?.turn);
   const myCurrentOrder = currentOrders.find(o => o.faction === myFaction);
 
@@ -209,6 +222,44 @@ export default function Wargame() {
       setStatus('Orders withdrawn');
       loadGame();
     } catch (e) { setStatus('Error: ' + e.message); }
+  };
+
+  const voteRestart = async () => {
+    const currentVotes = (game.state.restartVotes || []);
+    const newVotes = currentVotes.includes(myFaction)
+      ? currentVotes.filter(f => f !== myFaction)
+      : [...currentVotes, myFaction];
+
+    // Filter to only factions still actively claimed
+    const activeClaimed = Object.entries(game.state.factions)
+      .filter(([, d]) => d.player)
+      .map(([name]) => name);
+    const activeVotes = newVotes.filter(f => activeClaimed.includes(f));
+    const majorityNeeded = Math.floor(activeClaimed.length / 2) + 1;
+
+    if (activeVotes.length >= majorityNeeded && activeClaimed.length > 0) {
+      // Majority reached — wipe orders and reset game
+      try {
+        await sb('orders?turn=gte.1', { method: 'DELETE' });
+        await sb('game?id=eq.1', {
+          method: 'PATCH',
+          body: JSON.stringify({ turn: 1, state: INITIAL_STATE, narrative: '' }),
+        });
+        localStorage.removeItem('myFaction');
+        localStorage.removeItem('myName');
+        setMyFaction('');
+        setMyName('');
+        loadGame();
+      } catch (e) { setStatus('Error restarting: ' + e.message); }
+    } else {
+      try {
+        await sb('game?id=eq.1', {
+          method: 'PATCH',
+          body: JSON.stringify({ state: { ...game.state, restartVotes: activeVotes } }),
+        });
+        loadGame();
+      } catch (e) { setStatus('Error: ' + e.message); }
+    }
   };
 
   const unlockRef = () => {
@@ -311,6 +362,9 @@ Advance the season (Spring→Summer→Autumn→Winter→next year Spring). Updat
   }
 
   const claimedCount = Object.values(game.state.factions).filter(f => f.player).length;
+  const restartVotes = (game.state.restartVotes || []).filter(f => game.state.factions[f]?.player);
+  const majorityNeeded = Math.floor(claimedCount / 2) + 1;
+  const hasVotedRestart = restartVotes.includes(myFaction);
   const mapControl = game.state.mapControl || INITIAL_MAP_CONTROL;
   const numToFaction = Object.fromEntries(
     Object.entries(mapControl)
@@ -436,6 +490,35 @@ Advance the season (Spring→Summer→Autumn→Winter→next year Spring). Updat
             );
           })}
         </div>
+
+        {/* Restart vote */}
+        {(restartVotes.length > 0 || myFaction) && (
+          <div style={{ marginBottom: 32, border: '1px solid #4a3728', borderRadius: 2, background: 'rgba(0,0,0,0.35)', padding: '14px 20px', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+            <div style={{ flex: 1, minWidth: 180 }}>
+              <span style={{ fontSize: 11, letterSpacing: 3, color: '#a06040' }}>⚑ RESTART VOTE</span>
+              <span style={{ marginLeft: 10, fontSize: 13, color: restartVotes.length >= majorityNeeded ? '#ef4444' : '#c8b89a' }}>
+                {restartVotes.length}/{claimedCount > 0 ? majorityNeeded : '?'} needed
+              </span>
+              {restartVotes.length > 0 && (
+                <span style={{ marginLeft: 10, fontSize: 11, color: '#888' }}>
+                  {restartVotes.map(f => `${FACTION_COLORS[f]?.emblem} ${f}`).join('  ')}
+                </span>
+              )}
+            </div>
+            {myFaction && (
+              <button onClick={voteRestart} style={{
+                padding: '7px 18px',
+                background: hasVotedRestart ? 'transparent' : '#7f1d1d',
+                color: hasVotedRestart ? '#a06040' : '#fbbf24',
+                border: `1px solid ${hasVotedRestart ? '#4a3728' : '#dc2626'}`,
+                cursor: 'pointer', fontSize: 11, letterSpacing: 2,
+                fontFamily: 'inherit', fontWeight: 'bold',
+              }}>
+                {hasVotedRestart ? 'WITHDRAW VOTE' : 'VOTE TO RESTART'}
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Order input */}
         {!myFaction ? (
