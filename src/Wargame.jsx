@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Crown, Sword, Scroll, Coins, Shield, Send, RefreshCw, Flame } from 'lucide-react';
 import { ComposableMap, Geographies, Geography } from 'react-simple-maps';
-import provincesData from './provinces.json';
+import provincesData from './provinces-topo.json';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_KEY;
