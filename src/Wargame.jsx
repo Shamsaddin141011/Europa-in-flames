@@ -122,6 +122,12 @@ const INITIAL_STATE = {
   mapControl: INITIAL_MAP_CONTROL,
 };
 
+// Old game rows stored ISO alpha-2 codes (FR, GB…); new format uses city IDs (paris, london…).
+// Return the stored mapControl only if at least one city ID is present, otherwise fall back.
+function resolveMapControl(stored) {
+  return (stored && CITIES.some(c => c.id in stored)) ? stored : INITIAL_MAP_CONTROL;
+}
+
 async function sb(path, options = {}) {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
     ...options,
@@ -354,7 +360,7 @@ Advance the season (Spring→Summer→Autumn→Winter→next year Spring). Updat
       Object.entries(result.updated_state.factions).forEach(([name, data]) => {
         preservedFactions[name] = { ...data, player: game.state.factions[name]?.player ?? null };
       });
-      const existingControl = game.state.mapControl || INITIAL_MAP_CONTROL;
+      const existingControl = resolveMapControl(game.state.mapControl);
       const newMapControl = result.map_control
         ? { ...existingControl, ...result.map_control }
         : existingControl;
@@ -409,7 +415,7 @@ Advance the season (Spring→Summer→Autumn→Winter→next year Spring). Updat
   const restartVotes = (game.state.restartVotes || []).filter(f => game.state.factions[f]?.player);
   const majorityNeeded = Math.floor(claimedCount / 2) + 1;
   const hasVotedRestart = restartVotes.includes(myFaction);
-  const mapControl = game.state.mapControl || INITIAL_MAP_CONTROL;
+  const mapControl = resolveMapControl(game.state.mapControl);
 
   return (
     <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #1a1410 0%, #2d1f15 50%, #1a1410 100%)', color: '#f5e6c8', fontFamily: 'Georgia, "Times New Roman", serif', padding: '24px' }}>
@@ -463,7 +469,7 @@ Advance the season (Spring→Summer→Autumn→Winter→next year Spring). Updat
                       key={cell.id}
                       d={cell.cellPath}
                       fill={faction ? FACTION_MAP_FILL[faction] : '#1a1610'}
-                      opacity={isHov ? 0.95 : faction ? 0.72 : 0.25}
+                      opacity={isHov ? 1 : faction ? 0.82 : 0.2}
                       style={{ cursor: 'crosshair', transition: 'opacity 0.1s' }}
                       onMouseEnter={() => setHoveredCity({ id: cell.id, name: cell.name, faction: faction || null })}
                       onMouseLeave={() => setHoveredCity(null)}
