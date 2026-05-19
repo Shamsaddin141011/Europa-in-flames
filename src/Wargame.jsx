@@ -27,7 +27,7 @@ const FACTION_MAP_FILL = {
   Naples:  '#ec4899',
 };
 
-const GEO_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_110m_admin_1_states_provinces.geojson';
+const GEO_URL = '/provinces.geojson';
 
 // ISO 3166-1 alpha-3 → alpha-2 (Natural Earth admin-1 uses adm0_a3)
 const ALPHA3_TO_ALPHA2 = {
