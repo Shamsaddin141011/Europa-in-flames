@@ -27,31 +27,18 @@ const FACTION_MAP_FILL = {
   Naples:  '#ec4899',
 };
 
-const GEO_URL = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json';
+const GEO_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_110m_admin_1_states_provinces.geojson';
 
-// ISO 3166-1 alpha-2 → numeric (world-atlas uses numeric IDs)
-const ALPHA2_TO_NUM = {
-  AD:20,  AL:8,   AM:51,  AT:40,  AZ:31,  BA:70,  BE:56,  BG:100, BY:112, CH:756,
-  CZ:203, DE:276, DK:208, DZ:12,  EE:233, EG:818, ES:724, FI:246, FR:250, GB:826,
-  GE:268, GR:300, HR:191, HU:348, IE:372, IL:376, IQ:368, IT:380, JO:400, KW:414,
-  KZ:398, LB:422, LT:440, LU:442, LV:428, LY:434, MC:492, MD:498, MK:807, MT:470,
-  NL:528, NO:578, OM:512, PL:616, PT:620, RO:642, RS:688, RU:643, SA:682, SE:752,
-  SI:705, SK:703, SM:674, SY:760, TN:788, TR:792, UA:804, XK:383, YE:887,
-};
-
-const NUM_TO_NAME = {
-  20:'Andorra',     8:'Albania',      51:'Armenia',      40:'Austria',      31:'Azerbaijan',
-  70:'Bosnia',      56:'Belgium',     100:'Bulgaria',    112:'Belarus',     756:'Switzerland',
-  203:'Czech Rep.', 276:'Germany',    208:'Denmark',     12:'Algeria',      233:'Estonia',
-  818:'Egypt',      724:'Spain',      246:'Finland',     250:'France',      826:'Great Britain',
-  268:'Georgia',    300:'Greece',     191:'Croatia',     348:'Hungary',     372:'Ireland',
-  376:'Palestine',  368:'Iraq',       380:'Italy',       400:'Jordan',      414:'Kuwait',
-  398:'Kazakhstan', 422:'Lebanon',    440:'Lithuania',   442:'Luxembourg',  428:'Latvia',
-  434:'Libya',      492:'Monaco',     498:'Moldova',     807:'N. Macedonia',470:'Malta',
-  528:'Netherlands',578:'Norway',     512:'Oman',        616:'Poland',      620:'Portugal',
-  642:'Romania',    688:'Serbia',     643:'Russia',      682:'Saudi Arabia',752:'Sweden',
-  705:'Slovenia',   703:'Slovakia',   674:'San Marino',  760:'Syria',       788:'Tunisia',
-  792:'Turkey',     804:'Ukraine',    383:'Kosovo',      887:'Yemen',
+// ISO 3166-1 alpha-3 → alpha-2 (Natural Earth admin-1 uses adm0_a3)
+const ALPHA3_TO_ALPHA2 = {
+  AND:'AD', ALB:'AL', ARM:'AM', AUT:'AT', AZE:'AZ', BIH:'BA', BEL:'BE', BGR:'BG',
+  BLR:'BY', CHE:'CH', CZE:'CZ', DEU:'DE', DNK:'DK', DZA:'DZ', EST:'EE', EGY:'EG',
+  ESP:'ES', FIN:'FI', FRA:'FR', GBR:'GB', GEO:'GE', GRC:'GR', HRV:'HR', HUN:'HU',
+  IRL:'IE', ISR:'IL', IRQ:'IQ', ITA:'IT', JOR:'JO', KWT:'KW', KAZ:'KZ', LBN:'LB',
+  LTU:'LT', LUX:'LU', LVA:'LV', LBY:'LY', MCO:'MC', MDA:'MD', MKD:'MK', MLT:'MT',
+  NLD:'NL', NOR:'NO', OMN:'OM', POL:'PL', PRT:'PT', ROU:'RO', SRB:'RS', RUS:'RU',
+  SAU:'SA', SWE:'SE', SVN:'SI', SVK:'SK', SMR:'SM', SYR:'SY', TUN:'TN', TUR:'TR',
+  UKR:'UA', XKX:'XK', YEM:'YE',
 };
 
 const INITIAL_MAP_CONTROL = {
@@ -359,11 +346,6 @@ Advance the season (Spring→Summer→Autumn→Winter→next year Spring). Updat
   const majorityNeeded = Math.floor(claimedCount / 2) + 1;
   const hasVotedRestart = restartVotes.includes(myFaction);
   const mapControl = game.state.mapControl || INITIAL_MAP_CONTROL;
-  const numToFaction = Object.fromEntries(
-    Object.entries(mapControl)
-      .filter(([a2]) => ALPHA2_TO_NUM[a2])
-      .map(([a2, faction]) => [String(ALPHA2_TO_NUM[a2]), faction])
-  );
 
   return (
     <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #1a1410 0%, #2d1f15 50%, #1a1410 100%)', color: '#f5e6c8', fontFamily: 'Georgia, "Times New Roman", serif', padding: '24px' }}>
@@ -410,15 +392,16 @@ Advance the season (Spring→Summer→Autumn→Winter→next year Spring). Updat
               <Geographies geography={GEO_URL}>
                 {({ geographies }) =>
                   geographies.map((geo) => {
-                    const faction = numToFaction[String(geo.id)];
+                    const a2 = ALPHA3_TO_ALPHA2[geo.properties.adm0_a3];
+                    const faction = a2 ? mapControl[a2] : undefined;
                     return (
                       <Geography
                         key={geo.rsmKey}
                         geography={geo}
                         fill={faction ? FACTION_MAP_FILL[faction] : '#1e1a16'}
                         stroke="#0a0806"
-                        strokeWidth={0.5}
-                        onMouseEnter={() => setHoveredGeo({ id: geo.id, faction })}
+                        strokeWidth={0.3}
+                        onMouseEnter={() => setHoveredGeo({ name: geo.properties.name, country: geo.properties.admin, faction })}
                         onMouseLeave={() => setHoveredGeo(null)}
                         style={{
                           default: { outline: 'none', opacity: faction ? 0.9 : 0.5 },
@@ -435,8 +418,8 @@ Advance the season (Spring→Summer→Autumn→Winter→next year Spring). Updat
           {/* Hover info */}
           <div style={{ padding: '5px 16px', background: 'rgba(0,0,0,0.7)', borderTop: '1px solid #2a2420', fontSize: 12, letterSpacing: 1, minHeight: 26, lineHeight: '16px', color: hoveredGeo?.faction ? FACTION_MAP_FILL[hoveredGeo.faction] : '#555' }}>
             {hoveredGeo
-              ? `${NUM_TO_NAME[Number(hoveredGeo.id)] || 'Unknown Territory'} — ${hoveredGeo.faction ? hoveredGeo.faction.toUpperCase() : 'NEUTRAL'}`
-              : 'Hover over a territory for details'}
+              ? `${hoveredGeo.name}${hoveredGeo.country && hoveredGeo.country !== hoveredGeo.name ? `, ${hoveredGeo.country}` : ''} — ${hoveredGeo.faction ? hoveredGeo.faction.toUpperCase() : 'NEUTRAL'}`
+              : 'Hover over a province for details'}
           </div>
           {/* Legend */}
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 16px', padding: '10px 16px', background: 'rgba(0,0,0,0.6)', borderTop: '1px solid #2a2420' }}>
