@@ -1,6 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Crown, Sword, Scroll, Coins, Shield, Send, RefreshCw, Flame } from 'lucide-react';
 import { ComposableMap, Geographies, Geography } from 'react-simple-maps';
+import { Delaunay } from 'd3-delaunay';
+import { geoMercator } from 'd3-geo';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_KEY;
@@ -16,7 +18,6 @@ const FACTION_COLORS = {
   Naples:  { bg: '#581c87', accent: '#fbbf24', emblem: '♕' },
 };
 
-// Brighter fills for the map (readable on dark ocean background)
 const FACTION_MAP_FILL = {
   France:  '#3b82f6',
   Britain: '#ef4444',
@@ -30,64 +31,91 @@ const FACTION_MAP_FILL = {
 
 const GEO_URL = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json';
 
-// ISO 3166-1 alpha-2 → numeric (world-atlas uses numeric IDs on geo.id)
-const ALPHA2_TO_NUM = {
-  AD:20,  AL:8,   AM:51,  AT:40,  AZ:31,  BA:70,  BE:56,  BG:100, BY:112, CH:756,
-  CZ:203, DE:276, DK:208, DZ:12,  EE:233, EG:818, ES:724, FI:246, FR:250, GB:826,
-  GE:268, GR:300, HR:191, HU:348, IE:372, IL:376, IQ:368, IT:380, JO:400, KW:414,
-  KZ:398, LB:422, LT:440, LU:442, LV:428, LY:434, MC:492, MD:498, MK:807, MT:470,
-  NL:528, NO:578, OM:512, PL:616, PT:620, RO:642, RS:688, RU:643, SA:682, SE:752,
-  SI:705, SK:703, SM:674, SY:760, TN:788, TR:792, UA:804, XK:383, YE:887,
-};
+// MAP_W / MAP_H must match ComposableMap width/height exactly
+const MAP_W = 960;
+const MAP_H = 500;
+const MAP_CENTER = [20, 52];
+const MAP_SCALE = 520;
 
-const NUM_TO_NAME = {
-  20:'Andorra',     8:'Albania',      51:'Armenia',      40:'Austria',     31:'Azerbaijan',
-  70:'Bosnia',      56:'Belgium',     100:'Bulgaria',    112:'Belarus',    756:'Switzerland',
-  203:'Czech Rep.', 276:'Germany',    208:'Denmark',     12:'Algeria',     233:'Estonia',
-  818:'Egypt',      724:'Spain',      246:'Finland',     250:'France',     826:'Great Britain',
-  268:'Georgia',    300:'Greece',     191:'Croatia',     348:'Hungary',    372:'Ireland',
-  376:'Palestine',  368:'Iraq',       380:'Italy',       400:'Jordan',     414:'Kuwait',
-  398:'Kazakhstan', 422:'Lebanon',    440:'Lithuania',   442:'Luxembourg', 428:'Latvia',
-  434:'Libya',      492:'Monaco',     498:'Moldova',     807:'N. Macedonia',470:'Malta',
-  528:'Netherlands',578:'Norway',     512:'Oman',        616:'Poland',     620:'Portugal',
-  642:'Romania',    688:'Serbia',     643:'Russia',      682:'Saudi Arabia',752:'Sweden',
-  705:'Slovenia',   703:'Slovakia',   674:'San Marino',  760:'Syria',      788:'Tunisia',
-  792:'Turkey',     804:'Ukraine',    383:'Kosovo',      887:'Yemen',
-};
-
-// Starting map control — 1805 Napoleonic era (alpha-2 codes)
-const INITIAL_MAP_CONTROL = {
-  // France and satellites
-  FR:'France', NL:'France', BE:'France', LU:'France', CH:'France', MC:'France',
-  // Britain
-  GB:'Britain', IE:'Britain', MT:'Britain', PT:'Britain',
+// Historical cities of the Napoleonic era (1805)
+const CITIES = [
+  // France (+ satellite states)
+  { id:'paris',         name:'Paris',           coords:[ 2.35, 48.85], faction:'France',  capital:true  },
+  { id:'lyon',          name:'Lyon',            coords:[ 4.83, 45.75], faction:'France'               },
+  { id:'marseille',     name:'Marseille',       coords:[ 5.37, 43.30], faction:'France'               },
+  { id:'bordeaux',      name:'Bordeaux',        coords:[-0.58, 44.84], faction:'France'               },
+  { id:'strasbourg',    name:'Strasbourg',      coords:[ 7.75, 48.57], faction:'France'               },
+  { id:'amsterdam',     name:'Amsterdam',       coords:[ 4.90, 52.37], faction:'France'               },
+  { id:'brussels',      name:'Brussels',        coords:[ 4.35, 50.85], faction:'France'               },
+  { id:'milan',         name:'Milan',           coords:[ 9.19, 45.46], faction:'France'               },
+  { id:'genoa',         name:'Genoa',           coords:[ 8.93, 44.41], faction:'France'               },
+  // Britain (+ allies / colonies)
+  { id:'london',        name:'London',          coords:[-0.12, 51.51], faction:'Britain', capital:true  },
+  { id:'edinburgh',     name:'Edinburgh',       coords:[-3.19, 55.95], faction:'Britain'              },
+  { id:'dublin',        name:'Dublin',          coords:[-6.26, 53.33], faction:'Britain'              },
+  { id:'lisbon',        name:'Lisbon',          coords:[-9.14, 38.72], faction:'Britain'              },
+  { id:'gibraltar',     name:'Gibraltar',       coords:[-5.36, 36.14], faction:'Britain'              },
   // Russia
-  RU:'Russia', EE:'Russia', LV:'Russia', LT:'Russia', BY:'Russia', UA:'Russia',
-  MD:'Russia', AM:'Russia', GE:'Russia', AZ:'Russia',
-  // Prussia (north German states + Scandinavia for simplicity)
-  DE:'Prussia', PL:'Prussia', DK:'Prussia', SE:'Prussia', NO:'Prussia', FI:'Prussia',
+  { id:'st_petersburg', name:'St. Petersburg',  coords:[30.32, 59.95], faction:'Russia',  capital:true  },
+  { id:'moscow',        name:'Moscow',          coords:[37.62, 55.75], faction:'Russia'               },
+  { id:'warsaw',        name:'Warsaw',          coords:[21.01, 52.23], faction:'Russia'               },
+  { id:'riga',          name:'Riga',            coords:[24.11, 56.95], faction:'Russia'               },
+  { id:'vilnius',       name:'Vilnius',         coords:[25.28, 54.69], faction:'Russia'               },
+  { id:'kiev',          name:'Kiev',            coords:[30.52, 50.45], faction:'Russia'               },
+  { id:'odessa',        name:'Odessa',          coords:[30.72, 46.48], faction:'Russia'               },
+  // Prussia (+ Scandinavia)
+  { id:'berlin',        name:'Berlin',          coords:[13.40, 52.52], faction:'Prussia', capital:true  },
+  { id:'konigsberg',    name:'Königsberg',      coords:[20.51, 54.71], faction:'Prussia'              },
+  { id:'breslau',       name:'Breslau',         coords:[17.03, 51.11], faction:'Prussia'              },
+  { id:'hamburg',       name:'Hamburg',         coords:[ 9.99, 53.55], faction:'Prussia'              },
+  { id:'dresden',       name:'Dresden',         coords:[13.74, 51.05], faction:'Prussia'              },
+  { id:'stockholm',     name:'Stockholm',       coords:[18.07, 59.33], faction:'Prussia'              },
+  { id:'copenhagen',    name:'Copenhagen',      coords:[12.57, 55.68], faction:'Prussia'              },
   // Austria
-  AT:'Austria', CZ:'Austria', SK:'Austria', HU:'Austria', SI:'Austria', HR:'Austria',
+  { id:'vienna',        name:'Vienna',          coords:[16.37, 48.21], faction:'Austria', capital:true  },
+  { id:'prague',        name:'Prague',          coords:[14.42, 50.08], faction:'Austria'              },
+  { id:'budapest',      name:'Budapest',        coords:[19.04, 47.50], faction:'Austria'              },
+  { id:'venice',        name:'Venice',          coords:[12.34, 45.44], faction:'Austria'              },
+  { id:'trieste',       name:'Trieste',         coords:[13.77, 45.65], faction:'Austria'              },
+  { id:'lemberg',       name:'Lemberg',         coords:[24.03, 49.84], faction:'Austria'              },
   // Spain
-  ES:'Spain', AD:'Spain',
+  { id:'madrid',        name:'Madrid',          coords:[-3.70, 40.42], faction:'Spain',   capital:true  },
+  { id:'barcelona',     name:'Barcelona',       coords:[ 2.17, 41.38], faction:'Spain'               },
+  { id:'seville',       name:'Seville',         coords:[-5.99, 37.39], faction:'Spain'               },
+  { id:'cadiz',         name:'Cádiz',           coords:[-6.29, 36.53], faction:'Spain'               },
+  { id:'zaragoza',      name:'Zaragoza',        coords:[-0.88, 41.65], faction:'Spain'               },
   // Ottoman Empire
-  TR:'Ottoman', GR:'Ottoman', BG:'Ottoman', RS:'Ottoman', BA:'Ottoman', AL:'Ottoman',
-  MK:'Ottoman', RO:'Ottoman', SY:'Ottoman', LB:'Ottoman', IL:'Ottoman', JO:'Ottoman',
-  IQ:'Ottoman', SA:'Ottoman', YE:'Ottoman', EG:'Ottoman', LY:'Ottoman', TN:'Ottoman', DZ:'Ottoman',
+  { id:'constantinople',name:'Constantinople',  coords:[28.98, 41.01], faction:'Ottoman', capital:true  },
+  { id:'cairo',         name:'Cairo',           coords:[31.24, 30.06], faction:'Ottoman'              },
+  { id:'damascus',      name:'Damascus',        coords:[36.29, 33.51], faction:'Ottoman'              },
+  { id:'athens',        name:'Athens',          coords:[23.73, 37.98], faction:'Ottoman'              },
+  { id:'sofia',         name:'Sofia',           coords:[23.32, 42.70], faction:'Ottoman'              },
+  { id:'belgrade',      name:'Belgrade',        coords:[20.46, 44.80], faction:'Ottoman'              },
+  { id:'bucharest',     name:'Bucharest',       coords:[26.10, 44.44], faction:'Ottoman'              },
+  { id:'baghdad',       name:'Baghdad',         coords:[44.44, 33.34], faction:'Ottoman'              },
+  { id:'alexandria',    name:'Alexandria',      coords:[29.92, 31.20], faction:'Ottoman'              },
+  { id:'tripoli',       name:'Tripoli',         coords:[13.19, 32.90], faction:'Ottoman'              },
+  { id:'tunis',         name:'Tunis',           coords:[10.18, 36.82], faction:'Ottoman'              },
+  { id:'algiers',       name:'Algiers',         coords:[ 3.06, 36.74], faction:'Ottoman'              },
   // Kingdom of Naples
-  IT:'Naples', SM:'Naples',
-};
+  { id:'naples',        name:'Naples',          coords:[14.27, 40.84], faction:'Naples',  capital:true  },
+  { id:'palermo',       name:'Palermo',         coords:[13.36, 38.12], faction:'Naples'               },
+  { id:'rome',          name:'Rome',            coords:[12.49, 41.89], faction:'Naples'               },
+  { id:'bari',          name:'Bari',            coords:[16.87, 41.12], faction:'Naples'               },
+];
+
+const INITIAL_MAP_CONTROL = Object.fromEntries(CITIES.map(c => [c.id, c.faction]));
 
 const INITIAL_STATE = {
   factions: {
-    France:  { player: null, armies: 100, territories: ["Paris", "Lyon", "Marseille"],              treasury: 1000, morale: 95 },
-    Britain: { player: null, armies: 70,  territories: ["London", "Edinburgh", "Gibraltar"],         treasury: 1500, morale: 85 },
-    Russia:  { player: null, armies: 120, territories: ["Moscow", "St Petersburg", "Warsaw"],        treasury: 600,  morale: 70 },
-    Prussia: { player: null, armies: 60,  territories: ["Berlin", "Konigsberg"],                     treasury: 500,  morale: 75 },
-    Austria: { player: null, armies: 80,  territories: ["Vienna", "Prague", "Budapest"],             treasury: 700,  morale: 65 },
-    Spain:   { player: null, armies: 50,  territories: ["Madrid", "Barcelona"],                      treasury: 400,  morale: 50 },
-    Ottoman: { player: null, armies: 75,  territories: ["Constantinople", "Cairo", "Damascus"],      treasury: 600,  morale: 60 },
-    Naples:  { player: null, armies: 30,  territories: ["Naples", "Sicily"],                         treasury: 300,  morale: 55 },
+    France:  { player: null, armies: 100, territories: ['Paris','Lyon','Marseille','Bordeaux','Strasbourg','Amsterdam','Brussels','Milan','Genoa'],                                                   treasury: 1000, morale: 95 },
+    Britain: { player: null, armies: 70,  territories: ['London','Edinburgh','Dublin','Lisbon','Gibraltar'],                                                                                          treasury: 1500, morale: 85 },
+    Russia:  { player: null, armies: 130, territories: ['St. Petersburg','Moscow','Warsaw','Riga','Vilnius','Kiev','Odessa'],                                                                         treasury: 600,  morale: 70 },
+    Prussia: { player: null, armies: 80,  territories: ['Berlin','Königsberg','Breslau','Hamburg','Dresden','Stockholm','Copenhagen'],                                                                treasury: 600,  morale: 75 },
+    Austria: { player: null, armies: 90,  territories: ['Vienna','Prague','Budapest','Venice','Trieste','Lemberg'],                                                                                   treasury: 700,  morale: 65 },
+    Spain:   { player: null, armies: 60,  territories: ['Madrid','Barcelona','Seville','Cádiz','Zaragoza'],                                                                                          treasury: 400,  morale: 50 },
+    Ottoman: { player: null, armies: 100, territories: ['Constantinople','Cairo','Damascus','Athens','Sofia','Belgrade','Bucharest','Baghdad','Alexandria','Tripoli','Tunis','Algiers'],              treasury: 600,  morale: 55 },
+    Naples:  { player: null, armies: 30,  territories: ['Naples','Palermo','Rome','Bari'],                                                                                                           treasury: 300,  morale: 55 },
   },
   year: 1805,
   season: 'Spring',
@@ -123,7 +151,25 @@ export default function Wargame() {
   const [applying, setApplying] = useState(false);
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(true);
-  const [hoveredGeo, setHoveredGeo] = useState(null);
+  const [hoveredCity, setHoveredCity] = useState(null);
+
+  // Build Voronoi cells once — projects city lat/lon into SVG space using the same
+  // parameters as ComposableMap (geoMercator, scale 520, center [20,52], translate [480,250])
+  const voronoiCells = useMemo(() => {
+    const proj = geoMercator()
+      .scale(MAP_SCALE)
+      .translate([MAP_W / 2, MAP_H / 2])
+      .center(MAP_CENTER);
+    const pts = CITIES.map(c => proj(c.coords));
+    const delaunay = Delaunay.from(pts);
+    const voronoi = delaunay.voronoi([0, 0, MAP_W, MAP_H]);
+    return CITIES.map((city, i) => ({
+      ...city,
+      cellPath: voronoi.renderCell(i),
+      px: pts[i][0],
+      py: pts[i][1],
+    }));
+  }, []);
 
   const loadGame = async () => {
     try {
@@ -156,8 +202,8 @@ export default function Wargame() {
   // Clear stale localStorage faction if game was reset or faction was taken
   useEffect(() => {
     if (game && myFaction && myName) {
-      const factionData = game.state.factions[myFaction];
-      if (!factionData || factionData.player !== myName) {
+      const fd = game.state.factions[myFaction];
+      if (!fd || fd.player !== myName) {
         localStorage.removeItem('myFaction');
         localStorage.removeItem('myName');
         setMyFaction('');
@@ -229,16 +275,11 @@ export default function Wargame() {
     const newVotes = currentVotes.includes(myFaction)
       ? currentVotes.filter(f => f !== myFaction)
       : [...currentVotes, myFaction];
-
-    // Filter to only factions still actively claimed
     const activeClaimed = Object.entries(game.state.factions)
-      .filter(([, d]) => d.player)
-      .map(([name]) => name);
+      .filter(([, d]) => d.player).map(([name]) => name);
     const activeVotes = newVotes.filter(f => activeClaimed.includes(f));
     const majorityNeeded = Math.floor(activeClaimed.length / 2) + 1;
-
     if (activeVotes.length >= majorityNeeded && activeClaimed.length > 0) {
-      // Majority reached — wipe orders and reset game
       try {
         await sb('orders?turn=gte.1', { method: 'DELETE' });
         await sb('game?id=eq.1', {
@@ -276,6 +317,7 @@ export default function Wargame() {
     if (currentOrders.length === 0) { setStatus('No orders to copy'); return; }
     const orderLines = currentOrders.map(o => `${o.faction} — ${o.player_name}: ${o.order_text}`).join('\n\n');
     const stateStr = JSON.stringify(game.state, null, 2);
+    const cityIdList = CITIES.map(c => c.id).join(', ');
     const text = `You are the impartial referee of a Napoleonic Wars alt-history wargame. Resolve Turn ${game.turn} (${game.state.season} ${game.state.year}).
 
 Game state:
@@ -290,12 +332,14 @@ Return ONLY valid JSON in this exact format:
 {
   "narrative": "3-5 paragraph dramatic chronicle of what happened this turn",
   "updated_state": { "factions": {}, "year": 0, "season": "" },
-  "map_control": { "ISO_CODE": "FactionName" }
+  "map_control": { "city_id": "FactionName" }
 }
 
-For map_control: use ISO 3166-1 alpha-2 codes. Only include countries that CHANGED HANDS this turn — current control is already in the game state under mapControl. Available factions: France, Britain, Russia, Prussia, Austria, Spain, Ottoman, Naples. Example: if France captures Vienna this turn, include "AT": "France" in map_control.
+For map_control: use these city IDs. Only include cities that CHANGED HANDS this turn — current control is in game state under mapControl. Factions: France, Britain, Russia, Prussia, Austria, Spain, Ottoman, Naples.
+Available city IDs: ${cityIdList}
+Example: if France captures Vienna this turn, include "vienna": "France".
 
-Advance the season (Spring→Summer→Autumn→Winter→next year Spring). Update armies, territories, treasury, morale from outcomes. Output nothing except the JSON.`;
+Advance the season (Spring→Summer→Autumn→Winter→next year Spring). Update armies, territories, treasury, morale. Output nothing except the JSON.`;
     navigator.clipboard.writeText(text);
     setStatus('Prompt copied — paste into Claude.ai');
   };
@@ -366,11 +410,6 @@ Advance the season (Spring→Summer→Autumn→Winter→next year Spring). Updat
   const majorityNeeded = Math.floor(claimedCount / 2) + 1;
   const hasVotedRestart = restartVotes.includes(myFaction);
   const mapControl = game.state.mapControl || INITIAL_MAP_CONTROL;
-  const numToFaction = Object.fromEntries(
-    Object.entries(mapControl)
-      .filter(([a2]) => ALPHA2_TO_NUM[a2])
-      .map(([a2, faction]) => [String(ALPHA2_TO_NUM[a2]), faction])
-  );
 
   return (
     <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #1a1410 0%, #2d1f15 50%, #1a1410 100%)', color: '#f5e6c8', fontFamily: 'Georgia, "Times New Roman", serif', padding: '24px' }}>
@@ -387,9 +426,7 @@ Advance the season (Spring→Summer→Autumn→Winter→next year Spring). Updat
           <div style={{ marginTop: 16, display: 'inline-flex', gap: 24, padding: '8px 32px', border: '1px solid #8b6914', borderRadius: 2, background: 'rgba(0,0,0,0.3)', flexWrap: 'wrap', justifyContent: 'center' }}>
             <span style={{ fontSize: 14 }}><Scroll size={14} style={{ display: 'inline', marginRight: 6, verticalAlign: 'middle' }} />TURN {game.turn}</span>
             <span style={{ fontSize: 14 }}>{game.state.season} of {game.state.year}</span>
-            <span style={{ fontSize: 14, color: currentOrders.length > 0 ? '#90ee90' : '#d4af37' }}>
-              {currentOrders.length}/{claimedCount || 8} ORDERS
-            </span>
+            <span style={{ fontSize: 14, color: currentOrders.length > 0 ? '#90ee90' : '#d4af37' }}>{currentOrders.length}/{claimedCount || 8} ORDERS</span>
           </div>
         </div>
 
@@ -408,47 +445,121 @@ Advance the season (Spring→Summer→Autumn→Winter→next year Spring). Updat
           <div style={{ padding: '8px 16px', background: 'rgba(0,0,0,0.7)', borderBottom: '1px solid #8b6914', fontSize: 11, letterSpacing: 4, color: '#d4af37', textAlign: 'center' }}>
             ⚔ THE THEATRE OF WAR · {game.state.season.toUpperCase()} {game.state.year} ⚔
           </div>
-          <div style={{ background: '#0a0806', lineHeight: 0 }}>
+          <div style={{ background: '#060504', lineHeight: 0 }}>
             <ComposableMap
               projection="geoMercator"
-              projectionConfig={{ center: [20, 52], scale: 520 }}
+              projectionConfig={{ center: MAP_CENTER, scale: MAP_SCALE }}
+              width={MAP_W}
+              height={MAP_H}
               style={{ width: '100%', display: 'block' }}
-              width={960}
-              height={500}
             >
+              {/* Voronoi territory cells — one per city, colored by controlling faction */}
+              <g>
+                {voronoiCells.map(cell => {
+                  const faction = mapControl[cell.id];
+                  const isHov = hoveredCity?.id === cell.id;
+                  return (
+                    <path
+                      key={cell.id}
+                      d={cell.cellPath}
+                      fill={faction ? FACTION_MAP_FILL[faction] : '#1a1610'}
+                      opacity={isHov ? 0.95 : faction ? 0.72 : 0.25}
+                      style={{ cursor: 'crosshair', transition: 'opacity 0.1s' }}
+                      onMouseEnter={() => setHoveredCity({ id: cell.id, name: cell.name, faction: faction || null })}
+                      onMouseLeave={() => setHoveredCity(null)}
+                    />
+                  );
+                })}
+              </g>
+
+              {/* Country borders on top of Voronoi for geographic reference */}
               <Geographies geography={GEO_URL}>
                 {({ geographies }) =>
-                  geographies.map((geo) => {
-                    const faction = numToFaction[String(geo.id)];
-                    return (
-                      <Geography
-                        key={geo.rsmKey}
-                        geography={geo}
-                        fill={faction ? FACTION_MAP_FILL[faction] : '#1e1a16'}
-                        stroke="#0a0806"
-                        strokeWidth={0.5}
-                        onMouseEnter={() => setHoveredGeo({ id: geo.id, faction })}
-                        onMouseLeave={() => setHoveredGeo(null)}
-                        style={{
-                          default: { outline: 'none', opacity: faction ? 0.85 : 0.4 },
-                          hover:   { outline: 'none', opacity: 1, filter: 'brightness(1.35)' },
-                          pressed: { outline: 'none' },
-                        }}
-                      />
-                    );
-                  })
+                  geographies.map((geo) => (
+                    <Geography
+                      key={geo.rsmKey}
+                      geography={geo}
+                      fill="none"
+                      stroke="#2e2418"
+                      strokeWidth={0.6}
+                      style={{ default: { outline: 'none' }, hover: { outline: 'none' }, pressed: { outline: 'none' } }}
+                    />
+                  ))
                 }
               </Geographies>
+
+              {/* City markers and capital labels */}
+              {voronoiCells.map(cell => {
+                const faction = mapControl[cell.id];
+                const color = faction ? FACTION_MAP_FILL[faction] : '#555';
+                const isHov = hoveredCity?.id === cell.id;
+                const r = cell.capital ? 5 : 3.5;
+                return (
+                  <g
+                    key={`city-${cell.id}`}
+                    onMouseEnter={() => setHoveredCity({ id: cell.id, name: cell.name, faction: faction || null })}
+                    onMouseLeave={() => setHoveredCity(null)}
+                    style={{ cursor: 'crosshair' }}
+                  >
+                    {/* Outer glow ring for hovered or capital cities */}
+                    {(isHov || cell.capital) && (
+                      <circle
+                        cx={cell.px}
+                        cy={cell.py}
+                        r={r + 3}
+                        fill="none"
+                        stroke={isHov ? '#fff' : color}
+                        strokeWidth={isHov ? 1 : 0.6}
+                        opacity={isHov ? 0.8 : 0.35}
+                        style={{ pointerEvents: 'none' }}
+                      />
+                    )}
+                    <circle
+                      cx={cell.px}
+                      cy={cell.py}
+                      r={isHov ? r + 1 : r}
+                      fill={color}
+                      stroke={isHov ? '#fff' : '#060504'}
+                      strokeWidth={isHov ? 1.5 : 0.8}
+                    />
+                    {/* Star symbol for capitals */}
+                    {cell.capital && (
+                      <text
+                        x={cell.px}
+                        y={cell.py + 3.5}
+                        fontSize={5}
+                        textAnchor="middle"
+                        fill="#060504"
+                        style={{ pointerEvents: 'none', userSelect: 'none' }}
+                      >★</text>
+                    )}
+                    {/* Label for capital cities */}
+                    {cell.capital && (
+                      <text
+                        x={cell.px + r + 4}
+                        y={cell.py + 3.5}
+                        fontSize={8}
+                        fontFamily="Georgia, serif"
+                        fill="#e8d5b0"
+                        opacity={0.9}
+                        style={{ pointerEvents: 'none', userSelect: 'none' }}
+                      >{cell.name}</text>
+                    )}
+                  </g>
+                );
+              })}
             </ComposableMap>
           </div>
-          {/* Hover info */}
-          <div style={{ padding: '5px 16px', background: 'rgba(0,0,0,0.7)', borderTop: '1px solid #2a2420', fontSize: 12, letterSpacing: 1, minHeight: 26, lineHeight: '16px', color: hoveredGeo?.faction ? FACTION_MAP_FILL[hoveredGeo.faction] : '#555' }}>
-            {hoveredGeo
-              ? `${NUM_TO_NAME[Number(hoveredGeo.id)] || 'Unknown Territory'} — ${hoveredGeo.faction ? hoveredGeo.faction.toUpperCase() : 'NEUTRAL'}`
+
+          {/* Hover info bar */}
+          <div style={{ padding: '5px 16px', background: 'rgba(0,0,0,0.75)', borderTop: '1px solid #1e1a14', fontSize: 12, letterSpacing: 1, minHeight: 26, lineHeight: '16px', color: hoveredCity?.faction ? FACTION_MAP_FILL[hoveredCity.faction] : '#555' }}>
+            {hoveredCity
+              ? `${hoveredCity.name}${hoveredCity.faction ? ` — ${hoveredCity.faction.toUpperCase()}` : ' — NEUTRAL'}`
               : 'Hover over a territory for details'}
           </div>
+
           {/* Legend */}
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 16px', padding: '10px 16px', background: 'rgba(0,0,0,0.6)', borderTop: '1px solid #2a2420' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 16px', padding: '10px 16px', background: 'rgba(0,0,0,0.6)', borderTop: '1px solid #1e1a14' }}>
             {Object.entries(FACTION_MAP_FILL).map(([name, color]) => (
               <div key={name} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
                 <div style={{ width: 12, height: 12, background: color, flexShrink: 0 }} />
@@ -466,7 +577,7 @@ Advance the season (Spring→Summer→Autumn→Winter→next year Spring). Updat
             const isMine = myFaction === name;
             const isClaimed = !!data.player;
             return (
-              <div key={name} style={{ background: `linear-gradient(135deg, ${colors.bg} 0%, ${colors.bg}dd 100%)`, border: isMine ? `3px solid ${colors.accent}` : hasOrdered ? `2px solid ${colors.accent}` : '1px solid rgba(255,255,255,0.2)', padding: 16, borderRadius: 2, boxShadow: isMine ? `0 0 30px ${colors.accent}80` : hasOrdered ? `0 0 20px ${colors.accent}40` : '0 4px 12px rgba(0,0,0,0.4)', position: 'relative' }}>
+              <div key={name} style={{ background: `linear-gradient(135deg, ${colors.bg} 0%, ${colors.bg}dd 100%)`, border: isMine ? `3px solid ${colors.accent}` : hasOrdered ? `2px solid ${colors.accent}` : '1px solid rgba(255,255,255,0.2)', padding: 16, borderRadius: 2, boxShadow: isMine ? `0 0 30px ${colors.accent}80` : hasOrdered ? `0 0 20px ${colors.accent}40` : '0 4px 12px rgba(0,0,0,0.4)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                   <h3 style={{ margin: 0, fontSize: 20, letterSpacing: 2 }}><span style={{ marginRight: 8 }}>{colors.emblem}</span>{name.toUpperCase()}</h3>
                   {hasOrdered && <span style={{ fontSize: 10, color: colors.accent, letterSpacing: 2 }}>● ORDERED</span>}
@@ -478,9 +589,9 @@ Advance the season (Spring→Summer→Autumn→Winter→next year Spring). Updat
                   <div><Sword size={12} style={{ display: 'inline', marginRight: 4, verticalAlign: 'middle' }} />{data.armies}k troops</div>
                   <div><Coins size={12} style={{ display: 'inline', marginRight: 4, verticalAlign: 'middle' }} />{data.treasury}</div>
                   <div><Flame size={12} style={{ display: 'inline', marginRight: 4, verticalAlign: 'middle' }} />Morale {data.morale}</div>
-                  <div><Shield size={12} style={{ display: 'inline', marginRight: 4, verticalAlign: 'middle' }} />{data.territories.length} lands</div>
+                  <div><Shield size={12} style={{ display: 'inline', marginRight: 4, verticalAlign: 'middle' }} />{data.territories.length} cities</div>
                 </div>
-                <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.15)', fontSize: 11, opacity: 0.8 }}>
+                <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.15)', fontSize: 11, opacity: 0.8, lineHeight: 1.6 }}>
                   {data.territories.join(' · ')}
                 </div>
                 {!isClaimed && !myFaction && (
@@ -506,14 +617,7 @@ Advance the season (Spring→Summer→Autumn→Winter→next year Spring). Updat
               )}
             </div>
             {myFaction && (
-              <button onClick={voteRestart} style={{
-                padding: '7px 18px',
-                background: hasVotedRestart ? 'transparent' : '#7f1d1d',
-                color: hasVotedRestart ? '#a06040' : '#fbbf24',
-                border: `1px solid ${hasVotedRestart ? '#4a3728' : '#dc2626'}`,
-                cursor: 'pointer', fontSize: 11, letterSpacing: 2,
-                fontFamily: 'inherit', fontWeight: 'bold',
-              }}>
+              <button onClick={voteRestart} style={{ padding: '7px 18px', background: hasVotedRestart ? 'transparent' : '#7f1d1d', color: hasVotedRestart ? '#a06040' : '#fbbf24', border: `1px solid ${hasVotedRestart ? '#4a3728' : '#dc2626'}`, cursor: 'pointer', fontSize: 11, letterSpacing: 2, fontFamily: 'inherit', fontWeight: 'bold' }}>
                 {hasVotedRestart ? 'WITHDRAW VOTE' : 'VOTE TO RESTART'}
               </button>
             )}
