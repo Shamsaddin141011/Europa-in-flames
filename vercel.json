@@ -1,0 +1,8 @@
+{
+  "headers": [
+    {
+      "source": "/(.*\\.geojson)",
+      "headers": [{ "key": "Content-Type", "value": "application/json" }]
+    }
+  ]
+}

@@ -109,6 +109,7 @@ export default function Wargame() {
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(true);
   const [hoveredGeo, setHoveredGeo] = useState(null);
+  const [geoData, setGeoData] = useState(null);
 
   const loadGame = async () => {
     try {
@@ -136,6 +137,13 @@ export default function Wargame() {
     loadGame();
     const interval = setInterval(loadGame, 5000);
     return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    fetch('/provinces.geojson')
+      .then(r => r.json())
+      .then(data => setGeoData(data))
+      .catch(e => console.error('provinces load failed:', e));
   }, []);
 
   // Clear stale localStorage faction if game was reset or faction was taken
@@ -389,7 +397,7 @@ Advance the season (Spring→Summer→Autumn→Winter→next year Spring). Updat
               width={960}
               height={500}
             >
-              <Geographies geography={GEO_URL}>
+              <Geographies geography={geoData || GEO_URL}>
                 {({ geographies }) =>
                   geographies.map((geo) => {
                     const a2 = ALPHA3_TO_ALPHA2[geo.properties.adm0_a3];
